@@ -55,7 +55,7 @@ def float_to_fxp(val, fmt):
 def fxp_to_float(val, fmt):
     scale = fmt["scale"]
     if np.iscomplexobj(val):
-        return (val.real / scale) + 1j * (val.imag / scale)
+        return (val.real / scale) + 1j * (val.imag / scale)  
     else:
         return val / scale
 
@@ -142,11 +142,10 @@ def fxp_mul(a, b, fmt_a, fmt_b, fmt_out):
         prod_s = np.clip(prod_s, lo, hi).astype(np.int32)
         return prod_s
 
-def twiddle_quantized(k, block):
+def twiddle_quantized(k, block, fmt):
     angle = -2j * np.pi * k / block
     W = np.exp(angle)
-    fmt_tw = fxp_specs(1,11,12)  # Q1.15
-    return float_to_fxp(W, fmt_tw), fmt_tw
+    return float_to_fxp(W, fmt), fmt
 
 ###############################################################################
 # CSV writer helper
@@ -177,19 +176,23 @@ def dif_fft_radix2_fixedpoint(x_adc,base_filename="stage"):
     assert nstages == 8
 
     stage_formats = [
-         fxp_specs(2,16,18),
-         fxp_specs(3,15,18),
-         fxp_specs(4,14,18),
-         fxp_specs(5,13,18),
-         fxp_specs(6,12,18),
-         fxp_specs(7,11,18),
-         fxp_specs(8,10,18),
-         fxp_specs(9,9,18),
+         fxp_specs(2,18,20),
+         fxp_specs(3,17,20),
+         fxp_specs(4,16,20),
+         fxp_specs(5,15,20),
+         fxp_specs(6,14,20),
+         fxp_specs(7,13,20),
+         fxp_specs(8,12,20),
+         fxp_specs(9,11,20),
     ]
 
     fmt_stage0 = fxp_specs(1,11,12)
     X = float_to_fxp(x_adc.astype(np.complex128), fmt_stage0)
     write_stage_csv(f"{base_filename}input_18b.csv", X)
+
+    # Converting 12-bit input to 20-bit first stage format
+    X_float = fxp_to_float(X, fmt_stage0)
+    X = float_to_fxp(X_float, stage_formats[0])
 
     step = N // 2
     stage_idx = 0
@@ -200,7 +203,7 @@ def dif_fft_radix2_fixedpoint(x_adc,base_filename="stage"):
 
         for start in range(0, N, block):
             for k in range(half_step):
-                Wq, fmt_tw = twiddle_quantized(k, block)
+                Wq, fmt_tw = twiddle_quantized(k, block, fmt_stage)
 
                 i_top = start + k
                 i_bot = i_top + half_step
@@ -239,7 +242,10 @@ def dif_fft_radix2_fixedpoint(x_adc,base_filename="stage"):
     X_br = X[rev]
     write_stage_csv("final_fft_output.csv", X_br)
 
-    return X_br
+    # Converting fixed-point output to float for comparison
+    X_fx_full = fxp_to_float(X_br, stage_formats[-1])
+
+    return X_fx_full
 ###############################################################################
 # ADC quantization model: 12-bit Q1.11
 ###############################################################################
@@ -330,13 +336,6 @@ if __name__ == "__main__":
     print(f"Normalized RMSE: {nrmse*100:.2f}%")
     print(f"SNR comparison: NumPy={snr_np:.2f}dB, Fixed={snr_fx:.2f}dB, Δ={snr_np-snr_fx:.2f}dB")
 
-    
-
-
-
-    #############################################
-    ############## Spectral Mapping #############
-    #############################################
 
     # -------------------------------------------------
     # Signal generation
@@ -365,8 +364,8 @@ if __name__ == "__main__":
     
     win = np.hanning(fft_len).astype(np.float32)
 
-    spec_fixed = np.zeros((n_frames, n_freqs), dtype=np.float32)
-    spec_npfft = np.zeros((n_frames, n_freqs), dtype=np.float32)
+    spec_fixed = np.zeros((n_frames, fft_len), dtype=np.float32)
+    spec_npfft = np.zeros((n_frames, fft_len), dtype=np.float32)
     
     
     # -------------------------------------------------
@@ -383,11 +382,10 @@ if __name__ == "__main__":
     
         # ---- Fixed-point FFT path ----
         X_fixed_full = dif_fft_radix2_fixedpoint(frame_fp_win)
-        X_fixed_pos = X_fixed_full[:n_freqs]
-        spec_fixed[m, :] = np.abs(X_fixed_pos) / (np.sum(win) + 1e-12)
+        spec_fixed[m, :] = np.abs(X_fixed_full) / (np.sum(win) + 1e-12)
     
         # ---- NumPy FFT path (256-point, FP32 input) ----
-        X_np = np.fft.rfft(frame_np_win.astype(np.float32), n=fft_len)
+        X_np = np.fft.fft(frame_np_win.astype(np.float32), n=fft_len)
         spec_npfft[m, :] = np.abs(X_np) / (np.sum(win) + 1e-12)
     
     # -------------------------------------------------
@@ -401,8 +399,12 @@ if __name__ == "__main__":
     spec_fixed_db -= np.max(spec_fixed_db)
     spec_npfft_db -= np.max(spec_npfft_db)
     
-    freq_axis = (Fs / fft_len) * np.arange(n_freqs)
+    freq_axis = np.fft.fftshift(np.fft.fftfreq(fft_len, 1/Fs))
     time_axis = (hop / Fs) * np.arange(n_frames)
+    
+    # Shift the spectrograms to match the shifted frequency axis
+    spec_fixed_db = np.fft.fftshift(spec_fixed_db, axes=1)
+    spec_npfft_db = np.fft.fftshift(spec_npfft_db, axes=1)
 
     # After computing X_np_full and X_fx_full
     rmse_all = np.sqrt(mse_all)
@@ -410,40 +412,47 @@ if __name__ == "__main__":
     mag_fx = np.abs(X_fx_full)
     nrmse = rmse_all / (np.mean(mag_np) + 1e-12)
 
-    # # -------------------------------------------------
-    # # Plot fft output
-    # # -------------------------------------------------
-    # plt.figure(figsize=(10, 4))
-    # plt.plot(np.concatenate([np.negative(freq_axis[:-1]), freq_axis[:-1]]), X_fixed_full, label="Fixed-Point FFT", marker='o')
-    # # plt.plot(freq_axis, np.abs(X_np), label="NumPy FFT (256-pt, FP32)", marker='x')
-    # plt.title("FFT Magnitude Comparison")
-    # plt.xlabel("Frequency (Hz)")
-    # plt.ylabel("Magnitude (normalized)")
-    # plt.xlim(-(Fs / 2), Fs / 2)
-    # plt.legend()
-    # plt.grid()
-    # plt.tight_layout()
-    # plt.show()
+    # -------------------------------------------------
+    # Plot fft output
+    # -------------------------------------------------
+
+    # Creating a frequency axis for the full FFT (256 bins)
+    freq_axis_full = np.fft.fftshift(np.fft.fftfreq(N, d=1/Fs))
+    X_fx_shifted = np.fft.fftshift(X_fx_full)
+    X_np_shifted = np.fft.fftshift(X_np_full)
+
+    plt.figure(figsize=(10, 4))
+    plt.plot(freq_axis_full, np.abs(X_fx_shifted), label="Fixed-Point FFT", marker='o')
+    plt.plot(freq_axis_full, np.abs(X_np_shifted), label="NumPy FFT (256-pt, FP32)", marker='x')
+    plt.title("FFT Magnitude Comparison")
+    plt.xlabel("Frequency (Hz)")
+    plt.ylabel("Magnitude (normalized)")
+    plt.xlim(-(Fs / 2), Fs / 2)
+    plt.legend()
+    plt.grid()
+    plt.tight_layout()
+    plt.show()
 
     
-    # # -------------------------------------------------
-    # # Plot both spectrograms
-    # # -------------------------------------------------
+    # -------------------------------------------------
+    # Plot both spectrograms
+    # -------------------------------------------------
     # fig, ax = plt.subplots(1, 2, figsize=(14, 5), sharex=True, sharey=True)
     
     # pcm0 = ax[1].pcolormesh(time_axis, freq_axis, spec_fixed_db.T,
-    #                         shading='auto', cmap='viridis')
+    #                     shading='nearest', cmap='viridis')
     # ax[1].set_title("Fixed-Point FFT Spectrogram")
     # ax[1].set_xlabel("Time (s)")
     # ax[1].set_ylabel("Frequency (Hz)")
-    # ax[1].set_ylim(0, Fs / 2)
+    # ax[1].set_ylim(-Fs / 2, Fs / 2)
     # fig.colorbar(pcm0, ax=ax[1], label="Magnitude (dB, normalized)")
     
     # pcm1 = ax[0].pcolormesh(time_axis, freq_axis, spec_npfft_db.T,
-    #                         shading='auto', cmap='viridis')
+    #                         shading='nearest', cmap='viridis')
+    
     # ax[0].set_title("NumPy FFT Spectrogram (256-pt, FP32)")
     # ax[0].set_xlabel("Time (s)")
-    # ax[0].set_ylim(0, Fs / 2)
+    # ax[0].set_ylim(-Fs / 2, Fs / 2)
     # fig.colorbar(pcm1, ax=ax[0], label="Magnitude (dB, normalized)")
     
     # plt.tight_layout()
