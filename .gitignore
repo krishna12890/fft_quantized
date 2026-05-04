@@ -214,3 +214,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+src/fft_quantized.py
+src/sprectral_map.py
+src/verilog
