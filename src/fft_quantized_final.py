@@ -25,22 +25,15 @@ def float_to_fxp(val, fmt):
 
     def q_scalar(z):
         if np.iscomplexobj(z):
-            #r = np.round(z.real * scale)
-            r = np.trunc(z.real*scale)
-            #if r == 1098:
-             #   print("z=,z.scal=, r=",z.real,z.real*scale,r)
-            #i = np.round(z.imag * scale)
-            i = np.trunc(z.imag*scale)
-            r = np.clip(r, lo, hi)
-            i = np.clip(i, lo, hi)
-            return r.astype(np.int32) + 1j * i.astype(np.int32)
+            r = np.trunc(z.real * scale).astype(np.int64)
+            i = np.trunc(z.imag * scale).astype(np.int64)
+            r = np.clip(r, lo, hi).astype(np.int32)
+            i = np.clip(i, lo, hi).astype(np.int32)
+            return r + 1j * i
         else:
-            #zz = np.round(z * scale)
-            zz = np.trunc(z*scale)
-            if zz == 1098:
-                print("z=, zz=",z*scale,zz)
-            zz = np.clip(zz, lo, hi)
-            return zz.astype(np.int32)
+            zz = np.trunc(z * scale).astype(np.int64)
+            zz = np.clip(zz, lo, hi).astype(np.int32)
+            return zz
 
     if isinstance(val, np.ndarray):
         out = np.zeros(val.shape, dtype=complex if np.iscomplexobj(val) else np.int32)
@@ -55,9 +48,10 @@ def float_to_fxp(val, fmt):
 def fxp_to_float(val, fmt):
     scale = fmt["scale"]
     if np.iscomplexobj(val):
-        return (val.real / scale) + 1j * (val.imag / scale)  
+        return (val.real / scale) + 1j * (val.imag / scale)
     else:
         return val / scale
+
 
 def fxp_add(a, b, fmt):
     lo = fmt["min_code"]
@@ -142,10 +136,10 @@ def fxp_mul(a, b, fmt_a, fmt_b, fmt_out):
         prod_s = np.clip(prod_s, lo, hi).astype(np.int32)
         return prod_s
 
-def twiddle_quantized(k, block, fmt):
+def twiddle_quantized(k, block, fmt_tw):
     angle = -2j * np.pi * k / block
     W = np.exp(angle)
-    return float_to_fxp(W, fmt), fmt
+    return float_to_fxp(W, fmt_tw), fmt_tw
 
 ###############################################################################
 # CSV writer helper
@@ -176,19 +170,19 @@ def dif_fft_radix2_fixedpoint(x_adc,base_filename="stage"):
     assert nstages == 8
 
     stage_formats = [
-         fxp_specs(2,18,20),
-         fxp_specs(3,17,20),
-         fxp_specs(4,16,20),
-         fxp_specs(5,15,20),
-         fxp_specs(6,14,20),
-         fxp_specs(7,13,20),
-         fxp_specs(8,12,20),
-         fxp_specs(9,11,20),
+        fxp_specs(2,14,16),  # Stage 0: Q2.14
+        fxp_specs(3,13,16),  # Stage 1: Q3.13
+        fxp_specs(4,12,16),  # Stage 2: Q4.12
+        fxp_specs(5,11,16),  # Stage 3: Q5.11
+        fxp_specs(6,10,16),  # Stage 4: Q6.10
+        fxp_specs(7,9,16),   # Stage 5: Q7.9
+        fxp_specs(8,8,16),   # Stage 6: Q8.8
+        fxp_specs(9,7,16),   # Stage 7: Q9.7
     ]
 
     fmt_stage0 = fxp_specs(1,11,12)
     X = float_to_fxp(x_adc.astype(np.complex128), fmt_stage0)
-    write_stage_csv(f"{base_filename}input_18b.csv", X)
+    write_stage_csv(f"{base_filename}input_16b.csv", X)
 
     # Converting 12-bit input to 20-bit first stage format
     X_float = fxp_to_float(X, fmt_stage0)
@@ -196,6 +190,8 @@ def dif_fft_radix2_fixedpoint(x_adc,base_filename="stage"):
 
     step = N // 2
     stage_idx = 0
+    fmt_tw = fxp_specs(1,15,16)
+
     while step >= 1:
         fmt_stage = stage_formats[stage_idx]
         half_step = step
@@ -203,7 +199,7 @@ def dif_fft_radix2_fixedpoint(x_adc,base_filename="stage"):
 
         for start in range(0, N, block):
             for k in range(half_step):
-                Wq, fmt_tw = twiddle_quantized(k, block, fmt_stage)
+                Wq, _ = twiddle_quantized(k, block, fmt_tw)
 
                 i_top = start + k
                 i_bot = i_top + half_step
@@ -226,7 +222,7 @@ def dif_fft_radix2_fixedpoint(x_adc,base_filename="stage"):
             fmt_next = stage_formats[stage_idx]
             X_float = fxp_to_float(X, fmt_stage)
             X = float_to_fxp(X_float, fmt_next)
-            write_stage_csv(f"{base_filename}{stage_idx}_output_18b.csv", X)
+            write_stage_csv(f"{base_filename}{stage_idx}_output_16b.csv", X)
 
     # bit-reverse
     def bit_reverse_indices(n):
@@ -431,29 +427,30 @@ if __name__ == "__main__":
     plt.legend()
     plt.grid()
     plt.tight_layout()
-    plt.show()
+    plt.savefig("fft_plot.png", dpi=300, bbox_inches="tight")
+    # plt.show()
 
     
     # -------------------------------------------------
     # Plot both spectrograms
     # -------------------------------------------------
-    # fig, ax = plt.subplots(1, 2, figsize=(14, 5), sharex=True, sharey=True)
+    fig, ax = plt.subplots(1, 2, figsize=(14, 5), sharex=True, sharey=True)
     
-    # pcm0 = ax[1].pcolormesh(time_axis, freq_axis, spec_fixed_db.T,
-    #                     shading='nearest', cmap='viridis')
-    # ax[1].set_title("Fixed-Point FFT Spectrogram")
-    # ax[1].set_xlabel("Time (s)")
-    # ax[1].set_ylabel("Frequency (Hz)")
-    # ax[1].set_ylim(-Fs / 2, Fs / 2)
-    # fig.colorbar(pcm0, ax=ax[1], label="Magnitude (dB, normalized)")
+    pcm0 = ax[1].pcolormesh(time_axis, freq_axis, spec_fixed_db.T,
+                        shading='nearest', cmap='viridis')
+    ax[1].set_title("Fixed-Point FFT Spectrogram")
+    ax[1].set_xlabel("Time (s)")
+    ax[1].set_ylabel("Frequency (Hz)")
+    ax[1].set_ylim(-Fs / 2, Fs / 2)
+    fig.colorbar(pcm0, ax=ax[1], label="Magnitude (dB, normalized)")
     
-    # pcm1 = ax[0].pcolormesh(time_axis, freq_axis, spec_npfft_db.T,
-    #                         shading='nearest', cmap='viridis')
+    pcm1 = ax[0].pcolormesh(time_axis, freq_axis, spec_npfft_db.T,
+                            shading='nearest', cmap='viridis')
     
-    # ax[0].set_title("NumPy FFT Spectrogram (256-pt, FP32)")
-    # ax[0].set_xlabel("Time (s)")
-    # ax[0].set_ylim(-Fs / 2, Fs / 2)
-    # fig.colorbar(pcm1, ax=ax[0], label="Magnitude (dB, normalized)")
+    ax[0].set_title("NumPy FFT Spectrogram (256-pt, FP32)")
+    ax[0].set_xlabel("Time (s)")
+    ax[0].set_ylim(-Fs / 2, Fs / 2)
+    fig.colorbar(pcm1, ax=ax[0], label="Magnitude (dB, normalized)")
     
-    # plt.tight_layout()
-    # plt.show()
+    plt.tight_layout()
+    plt.show()
