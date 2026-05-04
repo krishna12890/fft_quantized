@@ -428,29 +428,4 @@ if __name__ == "__main__":
     plt.grid()
     plt.tight_layout()
     plt.savefig("fft_plot.png", dpi=300, bbox_inches="tight")
-    # plt.show()
-
-    
-    # -------------------------------------------------
-    # Plot both spectrograms
-    # -------------------------------------------------
-    fig, ax = plt.subplots(1, 2, figsize=(14, 5), sharex=True, sharey=True)
-    
-    pcm0 = ax[1].pcolormesh(time_axis, freq_axis, spec_fixed_db.T,
-                        shading='nearest', cmap='viridis')
-    ax[1].set_title("Fixed-Point FFT Spectrogram")
-    ax[1].set_xlabel("Time (s)")
-    ax[1].set_ylabel("Frequency (Hz)")
-    ax[1].set_ylim(-Fs / 2, Fs / 2)
-    fig.colorbar(pcm0, ax=ax[1], label="Magnitude (dB, normalized)")
-    
-    pcm1 = ax[0].pcolormesh(time_axis, freq_axis, spec_npfft_db.T,
-                            shading='nearest', cmap='viridis')
-    
-    ax[0].set_title("NumPy FFT Spectrogram (256-pt, FP32)")
-    ax[0].set_xlabel("Time (s)")
-    ax[0].set_ylim(-Fs / 2, Fs / 2)
-    fig.colorbar(pcm1, ax=ax[0], label="Magnitude (dB, normalized)")
-    
-    plt.tight_layout()
     plt.show()
