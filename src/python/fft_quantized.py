@@ -7,7 +7,7 @@ import numpy as np
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_DIR = os.path.dirname(BASE_DIR)
+PROJECT_DIR = os.path.dirname(os.path.dirname(BASE_DIR))
 runs_dir = os.path.join(PROJECT_DIR, "runs")
 os.makedirs(runs_dir, exist_ok=True)
 
@@ -424,5 +424,7 @@ if __name__ == "__main__":
     plt.grid()
     plt.tight_layout()
     os.makedirs(runs_dir, exist_ok=True)
-    plt.savefig(os.path.join(runs_dir, "fft_plot.png"), dpi=300, bbox_inches="tight")
+    plt.savefig(
+        os.path.join(runs_dir, "fft_quantized_plot.png"), dpi=300, bbox_inches="tight"
+    )
     # plt.show()

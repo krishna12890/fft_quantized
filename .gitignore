@@ -215,5 +215,7 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+*.png
+
 runs/*
 !runs/.gitkeep
