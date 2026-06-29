@@ -11,4 +11,4 @@ It simulates an input from 12-bit ADC. It is qunatized to 16-bit Fixed-Point. It
    **- RMSE :**<br>
    **- Mean magnitude :**<br>
    **- Normalized RMSE :**<br>
-   **- SNR Comparison : **<br>
+   **- SNR Comparison :**<br>
