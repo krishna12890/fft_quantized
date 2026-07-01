@@ -37,7 +37,7 @@ def fft16_dif_real_f32(x, N, natural_order=True) -> np.ndarray:
     # Work buffer as complex64
     a = x.astype(np.complex64, copy=True)
 
-    # DIF stages (Gentleman–Sande butterflies)
+    # DIF stages
     m = N
     while m > 1:
         half = m // 2
@@ -54,41 +54,40 @@ def fft16_dif_real_f32(x, N, natural_order=True) -> np.ndarray:
         m = half
 
     if natural_order:
-        # DIF yields bit-reversed order; permute to linear
+        # Bit-reverse the output to natural order
         rev = _bit_reverse_indices(N)
         a = a[rev]
     return a.astype(np.complex64)
 
 
 if __name__ == "__main__":
-    # Test signal (float32): sum of two cosines exactly on DFT bins (k=3 and k=5)
     N = 256
     Fs = 256
-    tone_bin = 11
+    tone_bin = 13
     fin = tone_bin * Fs / N
     amp = 0.9
     n = np.arange(N, dtype=np.float32)
 
     x = amp * np.sin(2 * np.pi * fin * n / Fs)
 
-    # Our DIF FFT
+    # DIF FFT function
     X_dif = fft16_dif_real_f32(x, N, natural_order=True)
 
     # Reference NumPy
     X_np = np.fft.fft(x.astype(np.float32))
 
-    # Verify numerical agreement (float32 tolerance)
+    # float32 error tolerance check
     ok = np.allclose(X_dif, X_np, rtol=1e-5, atol=1e-5)
     print("Matches NumPy:", ok)
 
-    # Plot time-domain signal
+    # time-domain signal plot.
     fig, axs = plt.subplots(2, 1, figsize=(8, 6), constrained_layout=True)
     axs[0].plot(n, x, marker="o")
     axs[0].set_title("Time Domain (x[n])")
     axs[0].set_xlabel("n")
     axs[0].set_ylabel("Amplitude")
 
-    # Plot magnitude spectrum |X[k]| centered at 0 Hz
+    # frequency magnitude spectrum |X[k]| centered at 0 Hz
     freq_axis = np.fft.fftshift(np.fft.fftfreq(N, d=1 / Fs))
     axs[1].plot(freq_axis, np.abs(np.fft.fftshift(X_dif)))
     axs[1].set_title("Frequency Domain (|X[k]|)")
