@@ -119,12 +119,9 @@ def fxp_mul(a, b, fmt_a, fmt_b, fmt_out):
     lo = fmt_out["min_code"]
     hi = fmt_out["max_code"]
 
-    def round_shift(v):
+    def trunc_shift(v):
         if shift > 0:
-            bias = 1 << (shift - 1)
-            v_pos = v >= 0
-            v_rounded = np.where(v_pos, v + bias, v - bias)
-            return v_rounded >> shift
+            return v >> shift
         if shift < 0:
             return v << (-shift)
         return v
@@ -142,15 +139,15 @@ def fxp_mul(a, b, fmt_a, fmt_b, fmt_out):
             np.int64
         ) * br.astype(np.int64)
 
-        pr_s = round_shift(pr)
-        pi_s = round_shift(pi)
+        pr_s = trunc_shift(pr)
+        pi_s = trunc_shift(pi)
 
         pr_s = np.clip(pr_s, lo, hi).astype(np.int32)
         pi_s = np.clip(pi_s, lo, hi).astype(np.int32)
         return pr_s + 1j * pi_s
 
     prod = a.astype(np.int64) * b.astype(np.int64)
-    prod_s = round_shift(prod)
+    prod_s = trunc_shift(prod)
     prod_s = np.clip(prod_s, lo, hi).astype(np.int32)
     return prod_s
 
@@ -278,41 +275,6 @@ def adc_quantize_q1_11(x):
 
 
 ###############################################################################
-# SNR calculation
-###############################################################################
-
-
-def compute_snr_from_fft_bins(X_bins, fs_hz):
-    del fs_hz
-
-    mag = np.abs(X_bins)
-    bin_rms = mag
-    bin_power = bin_rms**2
-
-    fund_bin = np.argmax(bin_power[1:]) + 1
-    p_sig = bin_power[fund_bin]
-
-    exclude = [0, fund_bin]
-    noise_bins = [i for i in range(len(bin_power)) if i not in exclude]
-    p_noise = np.sum(bin_power[noise_bins])
-
-    snr_db = 10 * np.log10(p_sig / (p_noise + 1e-30))
-    return snr_db, fund_bin, p_sig, p_noise
-
-
-def snr_numpy_path(x_q, Fs):
-    N = len(x_q)
-    X_np = np.fft.rfft(x_q, n=N)
-    return compute_snr_from_fft_bins(X_np, Fs)
-
-
-def snr_fixedpoint_path(x_q, Fs):
-    X_full = dif_fft_radix2_fixedpoint(x_q)
-    X_pos = X_full[: len(x_q) // 2 + 1]
-    return compute_snr_from_fft_bins(X_pos, Fs)
-
-
-###############################################################################
 # Main test + MSE
 ###############################################################################
 
@@ -320,7 +282,7 @@ def snr_fixedpoint_path(x_q, Fs):
 if __name__ == "__main__":
     Fs = 256
     N = 256
-    tone_bin = 11
+    tone_bin = 13
     fin = tone_bin * Fs / N
 
     amp = 0.9
@@ -328,9 +290,6 @@ if __name__ == "__main__":
     x_analog = amp * np.sin(2 * np.pi * fin * n / Fs)
 
     x_q = adc_quantize_q1_11(x_analog)
-
-    snr_np, _, _, _ = snr_numpy_path(x_q, Fs)
-    snr_fx, _, _, _ = snr_fixedpoint_path(x_q, Fs)
 
     X_np_full = np.fft.fft(x_q, n=N)
     X_fx_full = dif_fft_radix2_fixedpoint(x_q)
@@ -345,86 +304,51 @@ if __name__ == "__main__":
     print(f"RMSE: {rmse_all:.2f}")
     print(f"Mean magnitude (NumPy): {np.mean(mag_np):.2f}")
     print(f"Normalized RMSE: {nrmse * 100:.2f}%")
-    print(
-        f"SNR comparison: NumPy={snr_np:.2f} dB, "
-        f"Fixed={snr_fx:.2f} dB, "
-        f"Delta={snr_np - snr_fx:.2f} dB"
-    )
 
-    n_long = np.arange(N * 16)
-    L = len(n_long)
-    half = L // 2
+    # Writing output to file for comparison with RTL.
+    #
+    # The RTL now uses a 16-bit datapath and the testbench packs each bin as
+    # {out_im[15:0], out_re[15:0]} (32-bit). RTL_OUTPUT_SCALE=16 puts this
+    # model's float output back on the RTL integer grid (its final-stage codes
+    # are 8x the RTL codes; codes/128 * 16 = codes/8). Each field is written as
+    # 16-bit two's complement to match the packing.
+    RTL_OUTPUT_SCALE = 16
+    output_file = os.path.join(runs_dir, "fft_py_out.txt")
+    with open(output_file, "w") as f:
+        for i in range(N):
+            real_val = int(np.real(X_fx_full[i]) * RTL_OUTPUT_SCALE) & 0xFFFF
+            imag_val = int(np.imag(X_fx_full[i]) * RTL_OUTPUT_SCALE) & 0xFFFF
 
-    fin2 = min(3 * fin, 0.45 * Fs)
+            # Combined as: real_16bit | (imag_16bit << 16)
+            combined = real_val | (imag_val << 16)
+            f.write(f"{i} {combined}\n")
 
-    x_analog_new = np.zeros(L, dtype=np.float32)
-    x_analog_new[:half] = amp * np.sin(2 * np.pi * fin * n_long[:half] / Fs)
-    x_analog_new[half:] = 0.6 * amp * np.sin(2 * np.pi * fin2 * n_long[half:] / Fs)
+    print(f"\nFFT output written to: {output_file}")
 
-    x_long = adc_quantize_q1_11(x_analog_new)
+    # -------------------------------------------------------------------------
+    # Plot the frequency-domain output: fixed-point FFT vs NumPy FP64 reference
+    # -------------------------------------------------------------------------
+    freqs = np.fft.fftshift(np.fft.fftfreq(N, d=1.0 / Fs))
+    mag_fx = np.fft.fftshift(np.abs(X_fx_full))
+    mag_ref = np.fft.fftshift(mag_np)
 
-    assert len(x_long) >= N, "Signal must be at least one FFT frame long"
-
-    fft_len = 256
-    hop = fft_len
-    n_frames = 1 + (len(x_long) - fft_len) // hop
-
-    win = np.hanning(fft_len).astype(np.float32)
-
-    spec_fixed = np.zeros((n_frames, fft_len), dtype=np.float32)
-    spec_npfft = np.zeros((n_frames, fft_len), dtype=np.float32)
-
-    for m in range(n_frames):
-        start = m * hop
-
-        frame_fp = x_long[start : start + fft_len].astype(np.float32)
-        frame_np = x_analog_new[start : start + fft_len].astype(np.float32)
-
-        frame_fp_win = frame_fp * win
-        frame_np_win = frame_np * win
-
-        X_fixed_full = dif_fft_radix2_fixedpoint(frame_fp_win)
-        spec_fixed[m, :] = np.abs(X_fixed_full) / (np.sum(win) + 1e-12)
-
-        X_np = np.fft.fft(frame_np_win.astype(np.float32), n=fft_len)
-        spec_npfft[m, :] = np.abs(X_np) / (np.sum(win) + 1e-12)
-
-    eps = 1e-12
-    spec_fixed_db = 20 * np.log10(spec_fixed + eps)
-    spec_npfft_db = 20 * np.log10(spec_npfft + eps)
-
-    spec_fixed_db -= np.max(spec_fixed_db)
-    spec_npfft_db -= np.max(spec_npfft_db)
-
-    spec_fixed_db = np.fft.fftshift(spec_fixed_db, axes=1)
-    spec_npfft_db = np.fft.fftshift(spec_npfft_db, axes=1)
-
-    freq_axis_full = np.fft.fftshift(np.fft.fftfreq(N, d=1 / Fs))
-    X_fx_shifted = np.fft.fftshift(X_fx_full)
-    X_np_shifted = np.fft.fftshift(X_np_full)
-
-    plt.figure(figsize=(10, 4))
+    plt.figure(figsize=(9, 4))
+    plt.plot(freqs, mag_ref, label="NumPy FFT (FP64)", linewidth=1.2)
     plt.plot(
-        freq_axis_full,
-        np.abs(X_fx_shifted),
-        label="Fixed-Point FFT",
+        freqs,
+        mag_fx,
+        label="Fixed-Point FFT (16-bit)",
+        linestyle="--",
         marker="o",
+        markersize=3,
     )
-    plt.plot(
-        freq_axis_full,
-        np.abs(X_np_shifted),
-        label="NumPy FFT (256-pt, FP32)",
-        marker="x",
-    )
-    plt.title("FFT Magnitude Comparison")
     plt.xlabel("Frequency (Hz)")
-    plt.ylabel("Magnitude (normalized)")
-    plt.xlim(-(Fs / 2), Fs / 2)
+    plt.ylabel("Magnitude")
+    plt.title("FFT Magnitude Comparison")
     plt.legend()
-    plt.grid()
+    plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    os.makedirs(runs_dir, exist_ok=True)
-    plt.savefig(
-        os.path.join(runs_dir, "fft_quantized_plot.png"), dpi=300, bbox_inches="tight"
-    )
-    # plt.show()
+
+    plot_file = os.path.join(runs_dir, "fft_magnitude.png")
+    plt.savefig(plot_file, dpi=150)
+    print(f"Frequency-domain plot written to: {plot_file}")
