@@ -8,7 +8,8 @@ import numpy as np
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(os.path.dirname(BASE_DIR))
-runs_dir = os.path.join(PROJECT_DIR, "runs")
+# The runs/python directory holds the generated Python artifacts (FFT output + plots).
+runs_dir = os.path.join(PROJECT_DIR, "runs", "python")
 os.makedirs(runs_dir, exist_ok=True)
 
 ###############################################################################
@@ -305,7 +306,7 @@ if __name__ == "__main__":
     print(f"Mean magnitude (NumPy): {np.mean(mag_np):.2f}")
     print(f"Normalized RMSE: {nrmse * 100:.2f}%")
 
-    # Writing output to file for comparison with RTL.
+    # Writes the output file used for comparison with the RTL.
     #
     # The RTL now uses a 16-bit datapath and the testbench packs each bin as
     # {out_im[15:0], out_re[15:0]} (32-bit). RTL_OUTPUT_SCALE=16 puts this
@@ -319,14 +320,14 @@ if __name__ == "__main__":
             real_val = int(np.real(X_fx_full[i]) * RTL_OUTPUT_SCALE) & 0xFFFF
             imag_val = int(np.imag(X_fx_full[i]) * RTL_OUTPUT_SCALE) & 0xFFFF
 
-            # Combined as: real_16bit | (imag_16bit << 16)
+            # Packs the two fields as: real_16bit | (imag_16bit << 16)
             combined = real_val | (imag_val << 16)
             f.write(f"{i} {combined}\n")
 
     print(f"\nFFT output written to: {output_file}")
 
     # -------------------------------------------------------------------------
-    # Plot the frequency-domain output: fixed-point FFT vs NumPy FP64 reference
+    # Plots the frequency-domain output: fixed-point FFT vs NumPy FP64 reference
     # -------------------------------------------------------------------------
     freqs = np.fft.fftshift(np.fft.fftfreq(N, d=1.0 / Fs))
     mag_fx = np.fft.fftshift(np.abs(X_fx_full))
