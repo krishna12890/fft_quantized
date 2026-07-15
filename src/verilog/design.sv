@@ -1,5 +1,4 @@
 `include "fft_pe.sv"
-// Code your design here
 module fft256_pe_controller_top (
     input  wire        clk,
     input  wire        rst,         // synchronous active-high
@@ -21,13 +20,14 @@ module fft256_pe_controller_top (
     output reg         out_valid,
     output reg  [8:0]  out_idx,     // bin index 0..257
     output reg  signed [15:0] out_re,
-  output reg  signed [15:0] out_im
+    
+    output reg  signed [15:0] out_im
 );
 
     // -----------------------------------------
     // Instantiate PE
     // -----------------------------------------
-    wire signed [15:0] pe_read_re18, pe_read_im18;
+    wire signed [15:0] pe_read_re16, pe_read_im16;
     wire               pe_read_valid;
     wire               pe_done_cmd;
 
@@ -59,8 +59,8 @@ module fft256_pe_controller_top (
         .load_real_only(pe_load_real_only),
         .read_mem_sel  (pe_read_mem_sel),
         .read_addr     (pe_read_addr),
-        .read_re18     (pe_read_re18),
-        .read_im18     (pe_read_im18),
+        .read_re16     (pe_read_re16),
+        .read_im16     (pe_read_im16),
         .read_valid    (pe_read_valid),
         .addr_a        (pe_addr_a),
         .addr_b        (pe_addr_b),
@@ -88,12 +88,12 @@ module fft256_pe_controller_top (
 
     // Stage, start index and k for butterflies
     reg  [2:0] stage;        // 0..7
-  reg  [7:0] start_idx;    // outer loop: 0, blk, 2*blk, ...
+    reg  [7:0] start_idx;    // outer loop: 0, blk, 2*blk, ...
     reg  [7:0] k_idx;        // 0..half-1
 
     // Derived quantities for current stage
     wire [7:0] half = (8'd128 >> stage);   // half = N/2^(stage+1)
-  wire [8:0] blk  = half*2;         // blk = 2*half
+    wire [8:0] blk  = half*2;         // blk = 2*half
 
     // Current butterfly indices
     wire [7:0] cur_addr_a = start_idx + k_idx;
@@ -347,8 +347,8 @@ module fft256_pe_controller_top (
                         if(out_ready)
                           begin
                         	out_idx   <= out_cnt - 2;
-                        	out_re    <= pe_read_re18;
-                        	out_im    <= pe_read_im18;
+                        	out_re    <= pe_read_re16;
+                        	out_im    <= pe_read_im16;
                         	out_valid <= pe_read_valid;       // usually 1 here
                         	out_cnt   <= out_cnt + 9'd1;
                           end
@@ -377,5 +377,5 @@ module fft256_pe_controller_top (
     end
   
   assign out_last = done;
-
+  
 endmodule

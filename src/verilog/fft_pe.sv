@@ -23,8 +23,8 @@ module fft_pe256_mem_trunc (
     // READ interface (16-bit output)
     input  wire        read_mem_sel,   // 0->mem0, 1->mem1
     input  wire [7:0]  read_addr,
-    output reg  signed [15:0] read_re18,
-    output reg  signed [15:0] read_im18,
+    output reg  signed [15:0] read_re16,
+    output reg  signed [15:0] read_im16,
     output reg         read_valid,
 
     // Butterfly addresses
@@ -76,34 +76,35 @@ module fft_pe256_mem_trunc (
     // --------------------------------------------------------
 
     // 12 -> 16 sign-extend
-    function signed [15:0] sext12to18;
+    function signed [15:0] sext12to16;
         input signed [11:0] x;
         begin
-            sext12to18 = { {4{x[11]}}, x };
+            sext12to16 = { {4{x[11]}}, x };
         end
     endfunction
 
     // 16 -> 36 sign-extend
-    function signed [35:0] sx18;
+    function signed [35:0] sx16;
         input signed [15:0] x;
         begin
-            sx18 = { {20{x[15]}}, x };
+            sx16 = { {20{x[15]}}, x };
         end
     endfunction
 
     // 36 -> 16: keep low 16 bits (TRUNCATION ONLY)
-    function signed [15:0] trunc18;
+    function signed [15:0] trunc16;
         input signed [35:0] x;
         begin
-            trunc18 = x[15:0];
+            trunc16 = x[15:0];
         end
     endfunction
 
-    // Arithmetic >> 15 (for Q1.15 twiddle scaling), truncation
-    function signed [35:0] arshift15;
+    // Arithmetic right shift by stage_frac (Q1.15 twiddle scale plus a
+    // per-stage 1-bit down-scale = 16), truncation toward -inf
+    function signed [35:0] arshift_scale;
         input signed [35:0] x;
         begin
-            arshift15 = x >>> stage_frac;
+            arshift_scale = x >>> stage_frac;
         end
     endfunction
 
@@ -118,7 +119,7 @@ module fft_pe256_mem_trunc (
     reg signed [31:0] p1, p2, p3, p4;
     reg signed [35:0] mult_re36, mult_im36;
     reg signed [35:0] t_re36, t_im36;
-    reg signed [15:0] t_re18, t_im18;
+    reg signed [15:0] t_re16, t_im16;
   
     always @*
       begin
@@ -152,33 +153,33 @@ module fft_pe256_mem_trunc (
               begin
                 if (load_mem_sel == 1'b0) 
                   begin
-                    mem0_re[load_addr] <= sext12to18(load_re12);
+                    mem0_re[load_addr] <= sext12to16(load_re12);
                     mem0_im[load_addr] <= (load_real_only) ? 16'sd0
-                                                           : sext12to18(load_im12);
+                                                           : sext12to16(load_im12);
                 end 
               else 
                 begin
-                    mem1_re[load_addr] <= sext12to18(load_re12);
+                    mem1_re[load_addr] <= sext12to16(load_re12);
                     mem1_im[load_addr] <= (load_real_only) ? 16'sd0
-                                                           : sext12to18(load_im12);
+                                                           : sext12to16(load_im12);
                 end
                 done <= 1'b1;
             end
 
             // --------------------------------------------
-            // 01: READ 18-bit out from mem0/mem1
+            // 01: READ 16-bit out from mem0/mem1
             // --------------------------------------------
             2'b01: 
               begin
                 if (read_mem_sel == 1'b0) 
                   begin
-                    read_re18 <= mem0_re[read_addr];
-                    read_im18 <= mem0_im[read_addr];
+                    read_re16 <= mem0_re[read_addr];
+                    read_im16 <= mem0_im[read_addr];
                    end 
                 else 
                   begin
-                    read_re18 <= mem1_re[read_addr];
-                    read_im18 <= mem1_im[read_addr];
+                    read_re16 <= mem1_re[read_addr];
+                    read_im16 <= mem1_im[read_addr];
                   end
                 read_valid <= 1'b1;
                 done       <= 1'b1;
@@ -204,10 +205,10 @@ module fft_pe256_mem_trunc (
                   end
 
                 // Butterfly add/sub with truncation
-                y0_re = trunc18( sx18(a_re) + sx18(b_re) );
-                y0_im = trunc18( sx18(a_im) + sx18(b_im) );
-                y1_re = trunc18( sx18(a_re) - sx18(b_re) );
-                y1_im = trunc18( sx18(a_im) - sx18(b_im) );
+                y0_re = trunc16( sx16(a_re) + sx16(b_re) );
+                y0_im = trunc16( sx16(a_im) + sx16(b_im) );
+                y1_re = trunc16( sx16(a_re) - sx16(b_re) );
+                y1_im = trunc16( sx16(a_im) - sx16(b_im) );
               
               
                 // Write to the opposite memory
@@ -241,15 +242,15 @@ module fft_pe256_mem_trunc (
                 // Optionally ignore imag(b) in multiply
                 b_im_eff = (real_compute) ? 16'sd0 : b_im;
               
-              y0_re = trunc18( sx18(a_re) + sx18(b_re) ) >>> 1;
-              y0_im = trunc18( sx18(a_im) + sx18(b_im) ) >>> 1;
-              t_re18 = trunc18( sx18(a_re) - sx18(b_re) );
-              t_im18 = trunc18( sx18(a_im) - sx18(b_im) );
+              y0_re = trunc16( sx16(a_re) + sx16(b_re) ) >>> 1;
+              y0_im = trunc16( sx16(a_im) + sx16(b_im) ) >>> 1;
+              t_re16 = trunc16( sx16(a_re) - sx16(b_re) );
+              t_im16 = trunc16( sx16(a_im) - sx16(b_im) );
               
-              p1 = $signed(t_re18)     * $signed(W_re15);
-              p2 = $signed(t_im18) * $signed(W_im15);
-              p3 = $signed(t_re18)     * $signed(W_im15);
-              p4 = $signed(t_im18) * $signed(W_re15);
+              p1 = $signed(t_re16)     * $signed(W_re15);
+              p2 = $signed(t_im16) * $signed(W_im15);
+              p3 = $signed(t_re16)     * $signed(W_im15);
+              p4 = $signed(t_im16) * $signed(W_re15);
               
                mult_re36 = $signed({{4{p1[31]}},p1}) -
                             $signed({{4{p2[31]}},p2});
@@ -257,11 +258,11 @@ module fft_pe256_mem_trunc (
                             $signed({{4{p4[31]}},p4});
 
                 // Scale by 2^-15 (Q1.15) with truncation
-                t_re36 = arshift15(mult_re36);
-                t_im36 = arshift15(mult_im36);
+                t_re36 = arshift_scale(mult_re36);
+                t_im36 = arshift_scale(mult_im36);
         
-              y1_re = trunc18(t_re36);
-              y1_im = trunc18(t_im36);
+              y1_re = trunc16(t_re36);
+              y1_im = trunc16(t_im36);
               
 //             $display("a_re = %d, b_re = %d, a_im = %d, b_im = %d,y0_re=%d, y0_im=%d, y1_re=%d, y1_im=%d , addr_out_a = %d, addr_out_b = %d",a_re, b_re, a_im, b_im, y0_re,y0_im,y1_re,y1_im,addr_out_a,addr_out_b);
 // $display("y0_re=%d, y0_im=%d, y1_re=%d, y1_im=%d , addr_out_a = %d, addr_out_b = %d",mem1_re[addr_out_a],mem1_im[addr_out_a],mem1_re[addr_out_b],mem1_im[addr_out_b],addr_out_a,addr_out_b);
