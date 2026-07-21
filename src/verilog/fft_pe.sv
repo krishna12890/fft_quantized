@@ -79,7 +79,7 @@ module fft_pe256_mem_trunc (
     function signed [15:0] sext12to16;
         input signed [11:0] x;
         begin
-            sext12to16 = { {4{x[11]}}, x };
+            sext12to16 = { x[11], x, 3'b000 };
         end
     endfunction
 

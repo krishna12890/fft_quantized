@@ -34,15 +34,16 @@ def float_to_fxp(val, fmt):
     lo = fmt["min_code"]
     hi = fmt["max_code"]
 
+    # datapath drops fractional bits with an arithmetic right shift (>>>).
     def q_scalar(z):
         if np.iscomplexobj(z):
-            r = np.trunc(z.real * scale).astype(np.int64)
-            i = np.trunc(z.imag * scale).astype(np.int64)
+            r = np.floor(z.real * scale).astype(np.int64)
+            i = np.floor(z.imag * scale).astype(np.int64)
             r = np.clip(r, lo, hi).astype(np.int32)
             i = np.clip(i, lo, hi).astype(np.int32)
             return r + 1j * i
 
-        zz = np.trunc(z * scale).astype(np.int64)
+        zz = np.floor(z * scale).astype(np.int64)
         zz = np.clip(zz, lo, hi).astype(np.int32)
         return zz
 
@@ -156,7 +157,9 @@ def fxp_mul(a, b, fmt_a, fmt_b, fmt_out):
 def twiddle_quantized(k, block, fmt_tw):
     angle = -2j * np.pi * k / block
     W = np.exp(angle)
-    return float_to_fxp(W, fmt_tw), fmt_tw
+    re_q = np.int32(np.round(W.real * (fmt_tw["scale"] - 1)))
+    im_q = np.int32(np.round(W.imag * (fmt_tw["scale"] - 1)))
+    return re_q + 1j * im_q, fmt_tw
 
 
 ###############################################################################
@@ -229,13 +232,17 @@ def dif_fft_radix2_fixedpoint(x_adc, base_filename="stage"):
 
                 add_val = fxp_add(top, bot, fmt_stage)
                 sub_val = fxp_sub(top, bot, fmt_stage)
-                bot_new = fxp_mul(
-                    sub_val,
-                    Wq,
-                    fmt_stage,
-                    fmt_tw,
-                    fmt_stage,
-                )
+
+                if step == 1:
+                    bot_new = sub_val
+                else:
+                    bot_new = fxp_mul(
+                        sub_val,
+                        Wq,
+                        fmt_stage,
+                        fmt_tw,
+                        fmt_stage,
+                    )
 
                 X[i_top] = add_val
                 X[i_bot] = bot_new
@@ -270,7 +277,7 @@ def dif_fft_radix2_fixedpoint(x_adc, base_filename="stage"):
 
 def adc_quantize_q1_11(x):
     scale = 2048.0
-    code = np.round(x * scale)
+    code = np.trunc(x * scale)
     code = np.clip(code, -2048, 2047)
     return code / scale
 
@@ -308,12 +315,11 @@ if __name__ == "__main__":
 
     # Writes the output file used for comparison with the RTL.
     #
-    # The RTL now uses a 16-bit datapath and the testbench packs each bin as
-    # {out_im[15:0], out_re[15:0]} (32-bit). RTL_OUTPUT_SCALE=16 puts this
-    # model's float output back on the RTL integer grid (its final-stage codes
-    # are 8x the RTL codes; codes/128 * 16 = codes/8). Each field is written as
-    # 16-bit two's complement to match the packing.
-    RTL_OUTPUT_SCALE = 16
+    # The RTL upscales its Q1.11 input by 3 bits (Q2.14) and ends at Q9.7, so
+    # its output codes equal this model's final-stage codes: float * 128. The
+    # testbench packs each bin as {out_im[15:0], out_re[15:0]} (32-bit), and
+    # each field is written here as 16-bit two's complement to match.
+    RTL_OUTPUT_SCALE = 128
     output_file = os.path.join(runs_dir, "fft_py_out.txt")
     with open(output_file, "w") as f:
         for i in range(N):
