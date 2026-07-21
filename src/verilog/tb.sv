@@ -193,7 +193,7 @@ module tb_fft256;
         $display("FFT computation completed at time %0t", $time);
 
         // Allow a few cycles for last outputs to flush
-      #2000;
+       #2000;
 
         $fclose(fh);
         $display("FFT results written to fft_out.txt");
