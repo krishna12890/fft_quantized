@@ -99,8 +99,6 @@ module fft_pe256_mem_trunc (
         end
     endfunction
 
-    // Arithmetic right shift by stage_frac (Q1.15 twiddle scale plus a
-    // per-stage 1-bit down-scale = 16), truncation toward -inf
     function signed [35:0] arshift_scale;
         input signed [35:0] x;
         begin

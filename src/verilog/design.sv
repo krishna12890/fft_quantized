@@ -116,12 +116,19 @@ module fft256_pe_controller_top (
     // Readout counter (0..256)
     reg [8:0] out_cnt;
 
+    localparam RO_ISSUE   = 2'd0;
+    localparam RO_WAIT    = 2'd1;
+    localparam RO_PRESENT = 2'd2;
+    reg [1:0] ro_st;
+    reg [8:0] ro_addr;
+    reg [1:0] ro_cnt;
+    reg       readout_done;
+
     // -----------------------------------------
     // FSM next-state logic
     // -----------------------------------------
     always @(*) begin
         next_state = state;
-      $display("state = %0d and stage = %0d",state,stage);
         case (state)
             S_IDLE: begin
                 if (start)
@@ -146,9 +153,9 @@ module fft256_pe_controller_top (
                 end
             end
 
-            S_READOUT: 
+            S_READOUT:
               begin
-                if (out_cnt == 9'd258)  // 256 + 2 pre-fetch cycles
+                if (readout_done)
                     next_state = S_DONE;
               end
 
@@ -172,6 +179,10 @@ module fft256_pe_controller_top (
             start_idx   <= 8'd0;
             k_idx       <= 8'd0;
             out_cnt     <= 9'd0;
+            ro_st        <= RO_ISSUE;
+            ro_addr      <= 9'd0;
+            ro_cnt       <= 2'd0;
+            readout_done <= 1'b0;
 
             busy        <= 1'b0;
             done        <= 1'b0;
@@ -180,9 +191,9 @@ module fft256_pe_controller_top (
             out_idx     <= 8'd0;
             out_re      <= 16'sd0;
             out_im      <= 16'sd0;
+            out_last    <= 1'b0;
 
-            // PE defaults
-            pe_cmd            <= 2'b01; // READ as harmless default
+            pe_cmd            <= 2'b00;
             pe_stage_sel      <= 3'd0;
             pe_mem_sel        <= 1'b0;
             pe_load_mem_sel   <= 1'b0;
@@ -206,7 +217,6 @@ module fft256_pe_controller_top (
             busy      <= (next_state != S_IDLE && next_state != S_DONE);
             done      <= 1'b0;
             in_ready  <= 1'b0;
-            out_valid <= 1'b0;
 
             // default "no-op-ish" PE command
             pe_cmd            <= 2'b01; // READ, but unused unless READ state
@@ -235,6 +245,10 @@ module fft256_pe_controller_top (
                     start_idx <= 8'd0;
                     k_idx     <= 8'd0;
                     out_cnt   <= 9'd0;
+                    ro_st        <= RO_ISSUE;
+                    ro_addr      <= 9'd0;
+                    ro_cnt       <= 2'd0;
+                    readout_done <= 1'b0;
                     if (next_state == S_LOAD)
                         busy <= 1'b1;
                 end
@@ -246,8 +260,8 @@ module fft256_pe_controller_top (
                   begin
                   if (load_cnt < 9'd256) 
                     begin
-                      in_ready <= ((load_cnt < 9'd255) ? 1'b1 : in_last); 
-                      if (in_valid) 
+                      in_ready <= 1'b1;
+                      if (in_valid && in_ready)
                           begin
                             pe_cmd            <= 2'b00;    // LOAD
                             pe_load_mem_sel   <= 1'b0;     // mem0
@@ -328,43 +342,52 @@ module fft256_pe_controller_top (
                 // Final results are in opposite memory of last read stage.
                 // For stage=7, cur_mem_sel=1 => final_mem_sel=0 => mem0
                 // ---------------------------------------------
-                S_READOUT: 
+                S_READOUT:
                   begin
-                    $display("Out Count = %0d",out_cnt);
-                    
-                    // Always read ahead (pre-fetch for 2-cycle latency)
-                    // This way bin N is ready to output when out_cnt == N
-                    if (out_cnt < 9'd258)  // 256 + 2 pre-fetch cycles
-                      begin
-                        pe_cmd          <= 2'b01;        // READ
-                        pe_read_mem_sel <= final_mem_sel; // mem0
-                        pe_read_addr    <= out_cnt[7:0];
-                      end
-                    
-                    // Output data with 2-cycle delay from when it was addressed
-                    if (out_cnt >= 9'd2 && out_cnt < 9'd258)
-                      begin
-                        if(out_ready)
-                          begin
-                        	out_idx   <= out_cnt - 2;
-                        	out_re    <= pe_read_re16;
-                        	out_im    <= pe_read_im16;
-                        	out_valid <= pe_read_valid;       // usually 1 here
-                        	out_cnt   <= out_cnt + 9'd1;
-                          end
-                      end
-                    else if (out_cnt < 9'd2)
-                      begin
-                        // Pre-fetch phase (no output yet)
-                        out_cnt <= out_cnt + 9'd1;
-                        out_valid <= 1'b0;
-                      end
-                    else
-                      begin
-                        // Done reading, stop
-                        out_valid <= 1'b0;
-                      end
-                	end
+                    case (ro_st)
+                      RO_ISSUE:
+                        begin
+                          pe_cmd          <= 2'b01;
+                          pe_read_mem_sel <= final_mem_sel;
+                          pe_read_addr    <= ro_addr[7:0];
+                          ro_cnt          <= 2'd1;
+                          ro_st           <= RO_WAIT;
+                        end
+                      RO_WAIT:
+                        begin
+                          pe_cmd          <= 2'b01;
+                          pe_read_mem_sel <= final_mem_sel;
+                          pe_read_addr    <= ro_addr[7:0];
+                          if (ro_cnt != 2'd0)
+                            ro_cnt <= ro_cnt - 2'd1;
+                          else
+                            begin
+                              out_idx   <= ro_addr;
+                              out_re    <= pe_read_re16;
+                              out_im    <= pe_read_im16;
+                              out_valid <= 1'b1;
+                              out_last  <= (ro_addr == 9'd255);
+                              ro_st     <= RO_PRESENT;
+                            end
+                        end
+                      RO_PRESENT:
+                        begin
+                          if (out_valid && out_ready)
+                            begin
+                              out_valid <= 1'b0;
+                              out_last  <= 1'b0;
+                              if (ro_addr == 9'd255)
+                                readout_done <= 1'b1;
+                              else
+                                begin
+                                  ro_addr <= ro_addr + 9'd1;
+                                  ro_st   <= RO_ISSUE;
+                                end
+                            end
+                        end
+                      default: ro_st <= RO_ISSUE;
+                    endcase
+                  end
 
                 // ---------------------------------------------
                 S_DONE: begin
@@ -375,7 +398,5 @@ module fft256_pe_controller_top (
             endcase
         end
     end
-  
-  assign out_last = done;
-  
+
 endmodule
