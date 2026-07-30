@@ -16,11 +16,11 @@ module fft256_pe_controller_top (
 
     // FFT output stream (final result)
     input reg  	   	   out_ready,
-    output reg 		   out_last, 
+    output reg 		   out_last,
     output reg         out_valid,
     output reg  [8:0]  out_idx,     // bin index 0..257
     output reg  signed [15:0] out_re,
-    
+
     output reg  signed [15:0] out_im
 );
 
@@ -31,6 +31,7 @@ module fft256_pe_controller_top (
     wire               pe_read_valid;
     wire               pe_done_cmd;
 
+    reg                pe_cmd_valid;   // ops enter the PE pipeline only when high
     reg  [1:0]         pe_cmd;
     reg  [2:0]         pe_stage_sel;
     reg                pe_mem_sel;
@@ -49,6 +50,7 @@ module fft256_pe_controller_top (
 
     fft_pe256_mem_trunc u_pe (
         .clk           (clk),
+        .cmd_valid     (pe_cmd_valid),
         .cmd           (pe_cmd),
         .stage_sel     (pe_stage_sel),
         .mem_sel       (pe_mem_sel),
@@ -124,6 +126,14 @@ module fft256_pe_controller_top (
     reg [1:0] ro_cnt;
     reg       readout_done;
 
+    // Wait between stages: the PE butterfly writes memory 4 cycles after issue.
+    // The controller stays in S_STAGE_INIT until the last pending butterfly
+    // finishes, then either starts the next stage or begins readout.
+    // This adds the pipeline drain delay between stages.
+    localparam [2:0] DRAIN_CYCLES = 3'd6;
+    reg [2:0] drain_cnt;
+    reg       all_stages_done;   // set after the stage-7 butterflies are issued
+
     // -----------------------------------------
     // FSM next-state logic
     // -----------------------------------------
@@ -141,16 +151,15 @@ module fft256_pe_controller_top (
             end
 
             S_STAGE_INIT: begin
-                next_state = S_STAGE_RUN;
+                // Hold here until the PE pipeline has drained, then either
+                // run the next stage or (after stage 7) start the readout.
+                if (drain_cnt == 3'd0)
+                    next_state = all_stages_done ? S_READOUT : S_STAGE_RUN;
             end
 
             S_STAGE_RUN: begin
-                if (last_k && last_start) begin
-                    if (stage == 3'd7)
-                        next_state = S_READOUT;
-                    else
-                        next_state = S_STAGE_INIT;
-                end
+                if (last_k && last_start)
+                    next_state = S_STAGE_INIT;   // always drain first
             end
 
             S_READOUT:
@@ -183,6 +192,8 @@ module fft256_pe_controller_top (
             ro_addr      <= 9'd0;
             ro_cnt       <= 2'd0;
             readout_done <= 1'b0;
+            drain_cnt       <= 3'd0;
+            all_stages_done <= 1'b0;
 
             busy        <= 1'b0;
             done        <= 1'b0;
@@ -193,6 +204,7 @@ module fft256_pe_controller_top (
             out_im      <= 16'sd0;
             out_last    <= 1'b0;
 
+            pe_cmd_valid      <= 1'b0;
             pe_cmd            <= 2'b00;
             pe_stage_sel      <= 3'd0;
             pe_mem_sel        <= 1'b0;
@@ -218,8 +230,9 @@ module fft256_pe_controller_top (
             done      <= 1'b0;
             in_ready  <= 1'b0;
 
-            // default "no-op-ish" PE command
-            pe_cmd            <= 2'b01; // READ, but unused unless READ state
+            // default: no command enters the PE pipeline this cycle
+            pe_cmd_valid      <= 1'b0;
+            pe_cmd            <= 2'b01;
             pe_stage_sel      <= stage;
             pe_mem_sel        <= cur_mem_sel;
             pe_load_mem_sel   <= 1'b0;
@@ -235,7 +248,7 @@ module fft256_pe_controller_top (
             pe_addr_out_b     <= 8'd0;
             pe_twiddle_idx    <= 8'd0;
             pe_real_compute   <= 1'b0;
-            
+
 
             case (state)
                 // ---------------------------------------------
@@ -249,6 +262,8 @@ module fft256_pe_controller_top (
                     ro_addr      <= 9'd0;
                     ro_cnt       <= 2'd0;
                     readout_done <= 1'b0;
+                    drain_cnt       <= 3'd0;
+                    all_stages_done <= 1'b0;
                     if (next_state == S_LOAD)
                         busy <= 1'b1;
                 end
@@ -256,13 +271,14 @@ module fft256_pe_controller_top (
                 // ---------------------------------------------
                 // LOAD 256 real samples into mem0
                 // ---------------------------------------------
-                S_LOAD: 
+                S_LOAD:
                   begin
-                  if (load_cnt < 9'd256) 
+                  if (load_cnt < 9'd256)
                     begin
                       in_ready <= 1'b1;
                       if (in_valid && in_ready)
                           begin
+                            pe_cmd_valid      <= 1'b1;
                             pe_cmd            <= 2'b00;    // LOAD
                             pe_load_mem_sel   <= 1'b0;     // mem0
                             pe_load_addr      <= load_cnt[7:0];
@@ -272,7 +288,7 @@ module fft256_pe_controller_top (
                             load_cnt          <= load_cnt + 9'd1;
                         end
                     end
-                    if (next_state == S_STAGE_INIT) 
+                    if (next_state == S_STAGE_INIT)
                       begin
                         stage     <= 3'd0;
                         start_idx <= 8'd0;
@@ -282,19 +298,23 @@ module fft256_pe_controller_top (
                 end
 
                 // ---------------------------------------------
-                // Init stage: reset start_idx, k_idx
+                // Init stage: reset start_idx, k_idx and let the PE
+                // pipeline drain (no ops are issued while we sit here)
                 // ---------------------------------------------
                 S_STAGE_INIT: begin
                     start_idx <= 8'd0;
                     k_idx     <= 8'd0;
+                    if (drain_cnt != 3'd0)
+                        drain_cnt <= drain_cnt - 3'd1;
                 end
 
                 // ---------------------------------------------
                 // Run butterflies for this stage
                 // ---------------------------------------------
-                S_STAGE_RUN: 
+                S_STAGE_RUN:
                   begin
-                    // Set up PE for this butterfly
+                    // Issue one butterfly into the PE pipeline every cycle
+                    pe_cmd_valid   <= 1'b1;
                     pe_mem_sel     <= cur_mem_sel;
                     pe_stage_sel   <= stage;
                     pe_addr_a      <= cur_addr_a;
@@ -315,25 +335,22 @@ module fft256_pe_controller_top (
                     // Update counters
                     if (last_k) begin
                         k_idx <= 8'd0;
-                      //  start_idx <=start_idx+blk;
-                      if (last_start) begin
-                            // finished this stage
-                            if (next_state == S_STAGE_INIT) begin
-                                stage     <= stage + 3'd1;
-                              // $display("stage=%d",stage);
-                                start_idx <= 8'd0;
-                            end
-                            // if next_state == S_READOUT, stage stays at 7
+                        if (last_start) begin
+                            // Finished issuing this stage; drain the PE
+                            // pipeline in S_STAGE_INIT before the next one.
+                            drain_cnt <= DRAIN_CYCLES;
+                            start_idx <= 8'd0;
+                            if (stage == 3'd7)
+                                all_stages_done <= 1'b1;  // -> readout after drain
+                            else
+                                stage <= stage + 3'd1;
                         end
                         else begin
                             start_idx <= start_idx + blk;
-                            //last_start<=0;
                         end
-                      
                     end
                     else begin
                         k_idx <= k_idx + 8'd1;
-                      
                     end
                   end
 
@@ -347,6 +364,7 @@ module fft256_pe_controller_top (
                     case (ro_st)
                       RO_ISSUE:
                         begin
+                          pe_cmd_valid    <= 1'b1;
                           pe_cmd          <= 2'b01;
                           pe_read_mem_sel <= final_mem_sel;
                           pe_read_addr    <= ro_addr[7:0];
@@ -355,6 +373,7 @@ module fft256_pe_controller_top (
                         end
                       RO_WAIT:
                         begin
+                          pe_cmd_valid    <= 1'b1;
                           pe_cmd          <= 2'b01;
                           pe_read_mem_sel <= final_mem_sel;
                           pe_read_addr    <= ro_addr[7:0];

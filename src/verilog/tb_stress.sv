@@ -1,3 +1,9 @@
+// Stress test for FFT256 controller: runs up to 1M frames with varying input tones
+// (cycling through 125 frequency bins). Each frame validates 256 output bins received,
+// peak magnitude matches input tone, TLAST asserted exactly once, and no stray TLAST.
+// Configurable via +frames, +progress, +tone0. Reports per-frame failures with tone,
+// bin count, missing bins, and peak frequency; final verdict PASS/FAIL.
+
 `timescale 1ns/1ps
 
 module tb_stress;

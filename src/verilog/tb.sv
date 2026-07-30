@@ -1,5 +1,9 @@
-// Code your testbench here
-// or browse Examples
+// AXI4-Stream protocol verification: three scenarios (golden, output backpressure, input stalls)
+// validate TVALID/TREADY/TLAST compliance and data integrity. Golden run establishes reference;
+// backpressure and stall tests check TVALID stability, TLAST framing, and no data corruption.
+// Detects protocol violations: TVALID drop, data changes while stalled, duplicate bins, stray TLAST.
+// Pass when all scenarios match reference data and zero protocol violations detected.
+
 `timescale 1ns/1ps
 
 module tb_fft256;
