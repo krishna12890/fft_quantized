@@ -110,13 +110,10 @@ module fft256_pe_controller_top (
  //   reg last_start;
 
     // Ping-pong memory:
-    //   stage even:  read mem0, write mem1 => mem_sel=0
-    //   stage odd :  read mem1, write mem0 => mem_sel=1
+    //   even stage: read mem0, write mem1
+    //   odd stage : read mem1, write mem0
     wire cur_mem_sel   = stage[0];
     wire final_mem_sel = ~cur_mem_sel; // where final FFT lives after last stage
-
-    // Readout counter (0..256)
-    reg [8:0] out_cnt;
 
     localparam RO_ISSUE   = 2'd0;
     localparam RO_WAIT    = 2'd1;
@@ -126,13 +123,10 @@ module fft256_pe_controller_top (
     reg [1:0] ro_cnt;
     reg       readout_done;
 
-    // Wait between stages: the PE butterfly writes memory 4 cycles after issue.
-    // The controller stays in S_STAGE_INIT until the last pending butterfly
-    // finishes, then either starts the next stage or begins readout.
-    // This adds the pipeline drain delay between stages.
+    // Drain the pipeline between stages so writes finish before the next stage.
     localparam [2:0] DRAIN_CYCLES = 3'd6;
     reg [2:0] drain_cnt;
-    reg       all_stages_done;   // set after the stage-7 butterflies are issued
+    reg       all_stages_done;   // set after stage 7 completes
 
     // -----------------------------------------
     // FSM next-state logic
@@ -187,7 +181,6 @@ module fft256_pe_controller_top (
             stage       <= 3'd0;
             start_idx   <= 8'd0;
             k_idx       <= 8'd0;
-            out_cnt     <= 9'd0;
             ro_st        <= RO_ISSUE;
             ro_addr      <= 9'd0;
             ro_cnt       <= 2'd0;
@@ -257,7 +250,6 @@ module fft256_pe_controller_top (
                     stage     <= 3'd0;
                     start_idx <= 8'd0;
                     k_idx     <= 8'd0;
-                    out_cnt   <= 9'd0;
                     ro_st        <= RO_ISSUE;
                     ro_addr      <= 9'd0;
                     ro_cnt       <= 2'd0;
