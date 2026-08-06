@@ -313,22 +313,20 @@ if __name__ == "__main__":
     print(f"Mean magnitude (NumPy): {np.mean(mag_np):.2f}")
     print(f"Normalized RMSE: {nrmse * 100:.2f}%")
 
-    # Writes the output file used for comparison with the RTL.
+    # Writes the output file used for comparison with the RTL and FPGA.
     #
     # The RTL upscales its Q1.11 input by 3 bits (Q2.14) and ends at Q9.7, so
-    # its output codes equal this model's final-stage codes: float * 128. The
-    # testbench packs each bin as {out_im[15:0], out_re[15:0]} (32-bit), and
-    # each field is written here as 16-bit two's complement to match.
+    # its output codes equal this model's final-stage codes: float * 128.
+    # Format per line: "index real imag" as signed decimal Q9.7 codes --
+    # identical to the RTL testbench (fft_out.txt) and the unpacked FPGA
+    # output, so all three files can be diffed directly.
     RTL_OUTPUT_SCALE = 128
     output_file = os.path.join(runs_dir, "fft_py_out.txt")
     with open(output_file, "w") as f:
         for i in range(N):
-            real_val = int(np.real(X_fx_full[i]) * RTL_OUTPUT_SCALE) & 0xFFFF
-            imag_val = int(np.imag(X_fx_full[i]) * RTL_OUTPUT_SCALE) & 0xFFFF
-
-            # Packs the two fields as: real_16bit | (imag_16bit << 16)
-            combined = real_val | (imag_val << 16)
-            f.write(f"{i} {combined}\n")
+            real_val = int(np.real(X_fx_full[i]) * RTL_OUTPUT_SCALE)
+            imag_val = int(np.imag(X_fx_full[i]) * RTL_OUTPUT_SCALE)
+            f.write(f"{i} {real_val} {imag_val}\n")
 
     print(f"\nFFT output written to: {output_file}")
 

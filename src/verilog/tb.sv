@@ -154,7 +154,8 @@ module tb_fft256;
 
     // ----------------------------------------------------
     // Output capture: write FFT bins to a file
-    // Format per line: index  {out_im[15:0], out_re[15:0]}  (32-bit packed)
+    // Format per line: "index real imag" (signed decimal Q9.7 codes),
+    // matching fft_py_out.txt and the unpacked FPGA output.
     // ----------------------------------------------------
     integer fh;
     initial begin
@@ -170,7 +171,7 @@ module tb_fft256;
       begin
         if (!rst && out_valid)
           begin
-            $fwrite(fh, "%d %d\n", out_idx,{out_im,out_re});
+            $fwrite(fh, "%0d %0d %0d\n", out_idx, out_re, out_im);
           end
       end
 
