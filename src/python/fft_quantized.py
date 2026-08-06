@@ -290,12 +290,11 @@ def adc_quantize_q1_11(x):
 if __name__ == "__main__":
     Fs = 256
     N = 256
-    tone_bin = 13
-    fin = tone_bin * Fs / N
 
-    amp = 0.9
     n = np.arange(N)
-    x_analog = amp * np.sin(2 * np.pi * fin * n / Fs)
+    x_analog = 0.9 * np.sin(2 * np.pi * 13 * n / Fs) + 0.5 * np.cos(
+        2 * np.pi * 3 * 7 * n / Fs
+    )
 
     x_q = adc_quantize_q1_11(x_analog)
 

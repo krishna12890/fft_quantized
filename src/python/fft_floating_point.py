@@ -65,12 +65,10 @@ def fft16_dif_real_f32(x, N, natural_order=True) -> np.ndarray:
 if __name__ == "__main__":
     N = 256
     Fs = 256
-    tone_bin = 13
-    fin = tone_bin * Fs / N
     amp = 0.9
     n = np.arange(N, dtype=np.float32)
 
-    x = amp * np.sin(2 * np.pi * fin * n / Fs)
+    x = 0.9 * np.sin(2 * np.pi * 13 * n / Fs) + 0.5 * np.cos(2 * np.pi * 3 * 7 * n / Fs)
 
     # Runs the DIF FFT.
     X_dif = fft16_dif_real_f32(x, N, natural_order=True)

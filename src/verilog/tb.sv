@@ -1,9 +1,5 @@
-// AXI4-Stream protocol verification: three scenarios (golden, output backpressure, input stalls)
-// validate TVALID/TREADY/TLAST compliance and data integrity. Golden run establishes reference;
-// backpressure and stall tests check TVALID stability, TLAST framing, and no data corruption.
-// Detects protocol violations: TVALID drop, data changes while stalled, duplicate bins, stray TLAST.
-// Pass when all scenarios match reference data and zero protocol violations detected.
-
+// Code your testbench here
+// or browse Examples
 `timescale 1ns/1ps
 
 module tb_fft256;
@@ -64,40 +60,33 @@ module tb_fft256;
     // Quantization: Q1.11 (12-bit signed)
     // x[n] = 0.9 * sin(2π*kbin*n/N), N = 256
     // ----------------------------------------------------
-    localparam integer N    = 256;
-    localparam integer KBIN = 13;
+    localparam integer N = 256;
 
     reg signed [11:0] sine_mem [0:N-1];
     integer i;
     real    pi;
-    real    amp;
-    real    theta;
+    real    theta_13, theta_21;
     real    val;
     integer q;
 
-    initial 
+    initial
       begin
-        pi  = 3.141592653589793;
-        amp = 0.9;  // 90% of full-scale
+        pi = 3.141592653589793;
 
+        // Two-tone signal: 0.9*sin(2π*13*n/256) + 0.5*cos(2π*21*n/256)
         for (i = 0; i < N; i = i + 1) begin
-            theta = 2.0 * pi * KBIN * i / N;
-            val   = amp * $sin(theta);    // in [-0.9, 0.9]
-          
-          
-           // $display("inside sine generation loop", $time);
+            theta_13 = 2.0 * pi * 13 * i / N;
+            theta_21 = 2.0 * pi * 21 * i / N;
+            val = 0.9 * $sin(theta_13) + 0.5 * $cos(theta_21);
 
             // Q1.11 scaling: 1 LSB = 1/2048
-            q = $rtoi(val * 2048.0);      // ideally in [-1843, 1843]
+            q = $rtoi(val * 2048.0);
 
             // Saturate to 12-bit signed range [-2048, 2047]
             if (q >  2047) q =  2047;
             if (q < -2048) q = -2048;
-         // $display("n=%0d : q=%0d ", i, q);
-            //$display("inside sine generation loop", $time);
 
             sine_mem[i] = q[11:0];
-          //$display("n=%0d : mem=%0d ", i, sine_mem[i]);
         end
     end
 
@@ -154,8 +143,7 @@ module tb_fft256;
 
     // ----------------------------------------------------
     // Output capture: write FFT bins to a file
-    // Format per line: "index real imag" (signed decimal Q9.7 codes),
-    // matching fft_py_out.txt and the unpacked FPGA output.
+    // Format per line: "index real imag" (signed decimal Q9.7 codes)
     // ----------------------------------------------------
     integer fh;
     initial begin
