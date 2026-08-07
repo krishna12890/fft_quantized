@@ -38,7 +38,6 @@ The design simulates input from a **12-bit ADC** (Q1.11) and produces a 16-bit f
 │       ├── twiddle_factors.sv      # Q1.15 twiddle ROM
 │       ├── tb.sv                   # main testbench (two-tone signal, file output)
 │       ├── tb_axis.sv              # AXI-Stream handshake corner cases
-│       ├── tb_frames.sv            # back-to-back multi-frame test
 │       └── tb_stress.sv            # long-run stress test (up to 1M frames)
 ├── runs/                           # generated outputs (plots, FFT dumps, sim results)
 ├── reference_paper/                # paper this architecture replicates
@@ -92,10 +91,6 @@ vvp tb
 # TVALID/TDATA stability, TLAST placement — vs a golden no-stall run
 iverilog -g2012 -o tb_axis design.sv tb_axis.sv
 vvp tb_axis
-
-# Back-to-back frames through the same core
-iverilog -g2012 -o tb_frames design.sv tb_frames.sv
-vvp tb_frames
 
 # Stress test: cycles input tones across 125 bins, checks peak bin,
 # bin count, and TLAST per frame. Plusargs: +frames=N +progress=N +tone0=N
